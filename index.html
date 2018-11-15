@@ -1,0 +1,360 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta http-equiv="X-UA-Compatible" content="ie=edge" />
+  <title>模型选点</title>
+  <script type="text/javascript" src="https://webapi.amap.com/maps?v=1.4.10&key=b60bc904aae641693656323712dea5b9&plugin=AMap.Autocomplete,AMap.Geocoder,AMap.MouseTool,AMap.GltfLoader"></script>
+  <script type="text/javascript" src="https://unpkg.com/vue@2.5.17/dist/vue.js"></script>
+  <style>
+    html,
+      body,
+      #app {
+        width: 100%;
+        height: 100%;
+        margin: 0;
+        padding: 0;
+      }
+      button {
+        cursor: pointer;
+      }
+
+      #app {
+        display: flex;
+      }
+
+      .controBox {
+        width: 300px;
+        height: 100%;
+        padding:10px;
+        overflow-y: auto;
+      }
+      .controBox>div {
+          margin-bottom: 10px;
+      }
+      #map {
+        flex: 1;
+        height: 100%;
+      }
+      .searchBox {
+        display: flex;
+        align-items: center;
+      }
+      .searchBox button {
+        flex: 1;
+      }
+      #smallMap {
+        width: 100%;
+        height: 200px;
+      }
+      .btnBox button {
+          width: 100%;
+          margin-bottom:10px;
+      }
+      #showBox {
+        position: relative;
+        height: 100%;
+      }
+      .toggle {
+        position: absolute;
+        top:0px;
+        right: -120px;
+        width: 120px;
+        z-index: 1000;
+        cursor: pointer;
+      }
+    </style>
+</head>
+
+<body>
+  <div id="app">
+    <div id="showBox">
+      <div @click="toggle" class="toggle">显示隐藏</div>
+      <div class="controBox" v-show="show">
+        <div class="searchBox">
+          <input v-model="address" placeholder="请输入地址" type="text" id="tipinput" /><button @click="searchAddress">定位</button>
+        </div>
+        <div>
+          <input id="satellite" type="checkbox" v-model="satellite" /><label for="satellite">使用卫星图层</label>
+        </div>
+        <div>
+          <span>选择模型：</span><input multiple="multiple" v-on:change="modelFileChange" type="file" />
+        </div>
+        <div class="item">
+          <div v-for="item in modelFileList">
+            <input type="radio" :id="item.name" v-model="selecttype" :value="item.name" /><label :for="item">{{item.name}}</label>
+          </div>
+        </div>
+        <div>点击地图选取坐标点(可拖动)</div>
+        <div id="smallMap"></div>
+        <h3>模型设置</h3>
+        <div >
+          <div v-for="item in modelFileList" v-if="/gltf/.test(item.name)">
+            <h4>{{item.name}}</h4>
+            <div>
+              <span>x轴旋转：</span><input v-model="item.rotateX" type="range" /><span>{{modelRotateX}}</span>
+            </div>
+            <div>
+              <span>y轴旋转：</span><input v-model="item.rotateY" type="range" /><span>{{modelRotateY}}</span>
+            </div>
+            <div>
+              <span>z轴旋转：</span><input v-model="item.rotateZ" type="range" /><span>{{modelRotateY}}</span>
+            </div>
+            <div>
+              <span>模型缩放：</span><input v-model="item.scale" type="text" />
+            </div>
+            <div>
+              <span>离地高度：</span><input v-model="item.positionHeight" type="text" />
+            </div>
+          </div>
+          <h3>图片设置</h3>
+          <div v-for="item in modelFileList" v-if="!/gltf/.test(item.name)">
+            <h4>{{item.name}}</h4>
+            <div>
+              <span>图片宽度：</span><input v-model="item.width" type="text" />
+            </div>
+            <div>
+              <span>图片高度：</span><input v-model="item.height" type="text" />
+            </div>
+            <div>
+              <span>离地高度：</span><input v-model="item.iconPositionHeight" type="text" />
+            </div>
+          </div>
+        </div>
+        <div class="btnBox">
+          <button @click="switchModel">{{ action }}</button>
+          <button @click="clearModel">全部清除</button>
+        </div>
+      </div>
+    </div>
+    <div id="map"></div>
+  </div>
+  <script>
+    new Vue({
+      el: "#app",
+      data: {
+        address: "",
+        geocoder: null,
+        map3D: null,
+        smallMap: null,
+        mouseTool: null,
+        overlays: [], //图层对象
+        object3Dlayer: null,
+        gltf: null,
+        gltfList: [],
+        markerList: [],
+        gltfObj: null,
+        modelScale: 50,
+        modelHeight: 0,
+        selecttype: "",
+        satelliteLayer: null,
+        satellite: true,
+        modelRotateX: 90,
+        modelRotateY: 0,
+        modelRotateZ: 0,
+        modelFileList: [],
+        show: true,
+        iconWidth: 30,
+        iconHeight: 30,
+        iconPositionHeight: 0
+      },
+      computed: {},
+      watch: {
+        satellite(newValue) {
+          if (this.satelliteLayer) {
+            newValue ? this.map3D.add(this.satelliteLayer) : this.map3D.remove(this.satelliteLayer)
+          }
+        },
+        selecttype(newValue, oldValue) {
+          if (this.mouseTool) {
+            this.mouseTool.marker({
+              draggable: true,
+              label: {
+                content: newValue,
+                offset: new AMap.Pixel(-8, 32)
+              }
+              //同Marker的Option设置
+            });
+          }
+        }
+      },
+      computed: {
+        action() {
+          return this.gltfList.length || this.markerList.length
+            ? "更新"
+            : "加载到3D地图";
+        }
+      },
+      mounted() {
+        //创建地图
+        this.map3D = new AMap.Map("map", {
+          resizeEnable: true,
+          center: [116.397428, 39.90923],
+          resizeEnable: true,
+          rotateEnable: true,
+          pitchEnable: true,
+          pitch: 80,
+          rotation: -15,
+          viewMode: "3D", //开启3D视图,默认为关闭
+          zoom: 13
+        });
+        this.satelliteLayer = new AMap.TileLayer.Satellite();
+        this.map3D.add(this.satelliteLayer)
+        this.smallMap = new AMap.Map("smallMap", {
+          resizeEnable: true,
+          center: [116.397428, 39.90923],
+          resizeEnable: true,
+          zoom: 13
+        });
+        this.smallMap.on('dragend', () => {
+          this.map3D.setCenter(this.smallMap.getCenter())
+        });
+        this.smallMap.on('zoomend', () => {
+          this.map3D.setZoom(this.smallMap.getZoom())
+        });
+        // this.map3D.on('dragend', ()=>{
+        //     this.smallMap.setCenter(this.map3D.getCenter())
+        // });
+        // this.map3D.on('zoomend', ()=>{
+        //     this.smallMap.setZoom(this.map3D.getZoom())
+        // });
+        this.mouseTool = new AMap.MouseTool(this.smallMap);
+        this.mouseTool.on("draw", e => {
+          if(this.selecttype){
+            e.obj.type = this.selecttype;
+            this.overlays.push(e.obj);
+          }
+          
+        });
+        // this.mouseTool.marker({
+        //   draggable: true,
+        //   label: {
+        //     content: this.selecttype,
+        //     offset: new AMap.Pixel(-8, 32)
+        //   }
+        //   //同Marker的Option设置
+        // });
+        var object3Dlayer = new AMap.Object3DLayer();
+        this.map3D.add(object3Dlayer);
+        this.object3Dlayer = object3Dlayer;
+        this.gltfObj = new AMap.GltfLoader();
+
+        //输入提示
+        var auto = new AMap.Autocomplete({
+          input: "tipinput"
+        });
+        //地点
+        this.geocoder = new AMap.Geocoder();
+        AMap.event.addListener(auto, "select", this.select); //注册监听，当选中某条记录时会触发
+      },
+      methods: {
+        toggle() {
+          this.show = !this.show
+        },
+        modelFileChange(e) {
+          let arr = []
+          for (let i = 0; i < e.target.files.length; i++) {
+            arr.push({
+              name:e.target.files[i].name,
+              rotateX:90,
+              rotateY:0,
+              rotateZ:0,
+              scale:50,
+              positionHeight:0,
+              width:30,
+              height:30,
+              iconPositionHeight:0,
+            })
+          }
+          this.modelFileList = arr
+        },
+        switchIcon() { },
+        clearModel() {
+          this.smallMap.remove(this.overlays);
+          this.map3D.remove(this.markerList);
+          this.gltfList.forEach(gltf => this.object3Dlayer.remove(gltf));
+          this.gltfList = [];
+          this.overlays = [];
+          this.markerList = [];
+        },
+        switchModel() {
+          //获取全部点信息
+          //如果有已加载的模型 先卸载
+          if (this.gltfList.length) {
+            this.gltfList.forEach(gltf => this.object3Dlayer.remove(gltf));
+            this.gltfList = [];
+          }
+          if (this.markerList.length) {
+            this.map3D.remove(this.markerList);
+            this.markerList = [];
+          }
+          this.overlays
+            .filter(obj => {
+              return /gltf/.test(obj.type);
+            })
+            .forEach(element => {
+              let position = element.getPosition();
+              let modelurl = "./model/" + element.type;
+              let config = this.modelFileList.filter(item=>item.name==element.type)[0]
+              this.gltfObj.load(modelurl, gltf => {
+                gltf.setOption({
+                  position: position, // 必须
+                  scale: config.scale, // 非必须，默认1
+                  height: config.height, // 非必须，默认0
+                  scene: 0 // 非必须，默认0
+                });
+                gltf.rotateX(config.rotateX);
+                gltf.rotateY(config.rotateY);
+                gltf.rotateZ(config.rotateZ);
+                this.object3Dlayer.add(gltf);
+                this.gltfList.push(gltf);
+              });
+            });
+          this.overlays
+            .filter(obj => {
+              return !/gltf/.test(obj.type)
+            })
+            .forEach(element => {
+              let position = element.getPosition();
+              let iconurl = "./model/" + element.type;
+              let config = this.modelFileList.filter(item=>item.name==element.type)[0]
+              let marker = new AMap.Marker({
+                position: position, // 必须
+                icon: new AMap.Icon({
+                  image: iconurl,
+                  imageSize: new AMap.Size(config.width, config.height),
+                  size: new AMap.Size(config.width, config.height),
+                }),
+                height: config.iconPositionHeight,
+                offset: new AMap.Pixel(-config.width / 2, config.height / 2),
+                map: this.map3D
+              });
+              this.markerList.push(marker);
+            });
+        },
+        mapSetCenter(location) {
+          this.map3D.setCenter(location);
+          this.smallMap.setCenter(location);
+        },
+        searchAddress() {
+          this.select(this.address);
+        },
+        select(e) {
+          if (e && e.poi && e.poi.location) {
+            this.mapSetCenter(e.poi.location);
+          } else {
+            this.geocoder.getLocation(this.address, (status, data) => {
+              if (status === "complete") {
+                this.mapSetCenter(data.geocodes[0].location);
+              }
+            });
+          }
+        }
+      }
+    });
+  </script>
+</body>
+
+</html>
